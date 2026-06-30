@@ -1,0 +1,12 @@
+[project]
+name = "mcp-roam"
+version = "0.1.0"
+description = "MCP server for org-roam — bridge OpenCode to your knowledge graph"
+requires-python = ">=3.14"
+dependencies = [
+    "mcp[cli]>=1.0",
+    "sqlite-vec>=0.1.6",
+]
+
+[project.scripts]
+mcp-roam = "mcp_roam.server:main"
