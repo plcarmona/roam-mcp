@@ -1,0 +1,10 @@
+# Local scaffolding (kept out of the repo; README is canonical)
+TASKS.md
+ARCHITECTURE.md
+CONTEXT.md
+OPENCODE_SETUP.md
+
+# Python
+__pycache__/
+*.pyc
+.venv/

@@ -469,6 +469,8 @@ def register_all(
         results = embed_repo.search(
             query, k=fetch_k, unit_type=unit_type, rerank=rerank,
         )
+        # exclude code-indexed units (use roam_code_search for those)
+        results = [r for r in results if not r['node_id'].startswith('code:')]
 
         if not results:
             return (

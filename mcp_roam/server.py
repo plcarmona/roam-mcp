@@ -7,6 +7,7 @@ from pathlib import Path
 
 from mcp.server.fastmcp import FastMCP
 
+from mcp_roam._code_tools import register_code_tools
 from mcp_roam._tools import register_all
 from mcp_roam.embeddings import EmbeddingRepo
 from mcp_roam.files import RoamFileAccess
@@ -42,10 +43,31 @@ async def server_lifespan(mcp_app: FastMCP):
         )
         embed_repo = None
 
+    # code indexing (tree-sitter) — optional, degrades gracefully
+    code_graph = None
+    if embed_repo is not None:
+        try:
+            from mcp_roam.code import CodeGraph
+            code_graph = CodeGraph(embed_repo)
+            code_graph.init_schema()
+            warmed = code_graph.warm_all()
+            if warmed:
+                print(
+                    f'[code] warmed graph: {", ".join(warmed)}',
+                    file=sys.stderr,
+                )
+        except ImportError:
+            print(
+                'Warning: tree-sitter not installed — code indexing disabled.',
+                file=sys.stderr,
+            )
+            code_graph = None
+
     yield {
         'reader': reader,
         'file_access': file_access,
         'embed_repo': embed_repo,
+        'code_graph': code_graph,
     }
 
 
@@ -66,7 +88,15 @@ def _get_deps() -> tuple[SqliteRepo, RoamFileAccess, EmbeddingRepo | None]:
     return lc['reader'], lc['file_access'], lc.get('embed_repo')
 
 
+def _get_code_graph():
+    """Get the CodeGraph from the current lifespan context (or None)."""
+    ctx = mcp.get_context()
+    lc = ctx.request_context.lifespan_context
+    return lc.get('code_graph')
+
+
 register_all(mcp, _get_deps)
+register_code_tools(mcp, _get_code_graph)
 register_prompts(mcp)
 register_youtube(mcp)
 
