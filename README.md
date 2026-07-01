@@ -35,7 +35,7 @@ org-roam is a powerful plain-text knowledge graph, but its search is keyword-onl
 ```
 ┌──────────────┐     MCP / stdio      ┌────────────────────────┐
 │  MCP client  │◄────────────────────►│       mcp-roam         │
-│ (AI agent)   │                      │   (FastMCP, Python)     │
+│ (AI agent)   │                      │   (FastMCP, Python)    │
 └──────────────┘                      └───────────┬────────────┘
                                                   │
                             ┌─────────────────────┼──────────────────────┐
