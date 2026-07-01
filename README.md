@@ -13,6 +13,7 @@ org-roam is a powerful plain-text knowledge graph, but its search is keyword-onl
 - Turning a personal tool into an **MCP-native, agent-accessible service**.
 - Embedding a **vector store inside an existing SQLite database** (no separate vector DB to run).
 - A **local, private RAG pipeline** — embeddings, reranking, and LLM summarization all run on-device via Ollama.
+- **One vector index over notes *and* code** — the same SQLite store serves semantic search across your knowledge graph and your source tree.
 
 ---
 
@@ -23,6 +24,7 @@ org-roam is a powerful plain-text knowledge graph, but its search is keyword-onl
 - **Semantic search** — search by meaning, not keywords. Two-stage retrieval (vector KNN → cross-encoder rerank).
 - **Claim extraction** — decompose dense notes (lectures, papers) into atomic, self-contained, embeddable claims.
 - **LLM summarization** — map-reduce summaries for long notes via a local model.
+- **Code understanding** — index a Python codebase into the *same* vector store, search symbols by meaning, and expand a query into its callers / callees / imports graph. A file watcher keeps the index live on every save.
 - **YouTube ingestion** — transcribe hour-long videos into searchable notes asynchronously, then index them.
 - **Privacy-first** — all AI runs locally (Ollama); your notes never leave the machine.
 
@@ -80,7 +82,7 @@ This makes notes discoverable by the *idea they express*, even when the exact wo
 
 ## Tool reference
 
-`mcp-roam` exposes 18 tools and 3 prompts.
+`mcp-roam` exposes 23 tools and 3 prompts.
 
 | Tool | Description |
 |------|-------------|
@@ -100,6 +102,11 @@ This makes notes discoverable by the *idea they express*, even when the exact wo
 | `roam_extract_claims` | Decompose a note into atomic embeddable claims |
 | `roam_enhance` | LLM-generated summary (map-reduce for long notes) |
 | `roam_index_stats` | Embedding index statistics |
+| `roam_index_code` | Index a code project (Python) for semantic search |
+| `roam_code_search` | Semantic search across indexed code symbols |
+| `roam_code_graph` | Symbol search + callers / callees / imports expansion |
+| `roam_watch_code` | Watch a project and re-index incrementally on save |
+| `roam_watch_status` | Show the file watcher status and recent events |
 | `roam_youtube_note` | Start async YouTube → note transcription |
 | `roam_youtube_note_status` | Poll a transcription job |
 
@@ -190,6 +197,44 @@ From a raw YouTube URL to a semantically-queryable note — no copy-paste, no ma
 
 ---
 
+## Example 3 — Semantic search over a codebase
+
+Index any Python project into the *same* vector store as your notes, then ask for a concept in natural language and get the exact symbol plus its call graph.
+
+**1. Index the project (once):**
+
+```
+roam_index_code(path="/home/pit/projects/webui")
+→ Indexed webui: 42 files, 1180 symbols, 3402 edges.
+  Parse: 3.1s  Embed: 12.4s
+```
+
+**2. Ask for a concept — it returns the symbol and who calls it / what it calls:**
+
+```
+roam_code_graph(query="load a MIDI file into the synth", k=3)
+→ Code graph for "load a MIDI file into the synth" — 3 symbols
+
+## load_midi (webui/server.py, function, d=0.21)
+  reads a .mid and routes note-on events to the engine
+  Callers (2):
+    <- webui/server.py :: handle_upload
+  Callees (4):
+    -> webui/engine.py :: note_on
+    -> webui/parser.py :: parse_smf
+```
+
+One call gives the agent the symbol, its callers, and its callees — enough to answer or refactor without grepping. Code symbols reuse the `embed_*` tables (with `code:`-prefixed IDs), so there is no separate index.
+
+**3. Keep it live** — edits re-index on save:
+
+```
+roam_watch_code(path="/home/pit/projects/webui")
+→ Watcher started: webui ... re-indexes on save (debounce=300ms).
+```
+
+---
+
 ## Dependencies
 
 `mcp-roam` is intentionally lean on the Python side and relies on **local, private** services for AI.
@@ -198,8 +243,10 @@ From a raw YouTube URL to a semantically-queryable note — no copy-paste, no ma
 
 | Package | Role |
 |---------|------|
-| `mcp[cli]` | MCP SDK + CLI runner (the only framework dep) |
+| `mcp[cli]` | MCP SDK + CLI runner |
 | `sqlite-vec` | In-DB vector storage and KNN search |
+| `tree-sitter` + `tree-sitter-python` / `-typescript` | Source parsing → symbol extraction for code indexing |
+| `watchfiles` | inotify-based incremental re-indexing on save |
 
 Everything else is stdlib (`sqlite3`, `pathlib`, `re`, `uuid`, `urllib`, `dataclasses`, `concurrent.futures`).
 
@@ -209,7 +256,7 @@ Everything else is stdlib (`sqlite3`, `pathlib`, `re`, `uuid`, `urllib`, `datacl
 |---------|------|--------|
 | [Ollama](https://ollama.com) | Embeddings, reranking, LLM | `snowflake-arctic-embed2` (embed), `Qwen3-Reranker-4B` (rerank), `granite3.3` (LLM) |
 
-Core graph tools work **without** Ollama. Semantic search, claims, and enhancement degrade gracefully and report that Ollama is required.
+Core graph tools work **without** Ollama. Semantic search, claims, enhancement, and code indexing each degrade gracefully and report what's missing (Ollama, sqlite-vec, or tree-sitter).
 
 **External service (optional)**
 
@@ -265,10 +312,12 @@ Register it with an MCP client, e.g. OpenCode (`~/.config/opencode/opencode.json
 mcp_roam/
 ├── server.py       ← FastMCP entry point + composition root (lifespan DI)
 ├── _tools.py       ← 16 graph/semantic MCP tool definitions
+├── _code_tools.py  ← 5 code-indexing MCP tools (index/search/graph/watch)
 ├── youtube.py      ← 2 YouTube transcription tools (HTTP, stdlib-only)
 ├── prompts.py      ← 3 MCP prompts (assistant, research, analyze)
 ├── embeddings.py   ← sqlite-vec store + Ollama embed/rerank
 ├── segmenter.py    ← org-aware semantic unit segmentation
+├── code.py         ← code symbol graph: tree-sitter parse + embed + callers/callees + watcher
 ├── llm.py          ← Ollama LLM: map-reduce summary + claim extraction
 ├── domain.py       ← frozen dataclasses + org parsing (zero deps)
 ├── interfaces.py   ← Protocol definitions (DIP contracts)
@@ -282,8 +331,8 @@ mcp_roam/
 ## Design decisions
 
 - **SOLID throughout** — `interfaces.py` defines `RoamReader`/`RoamWriter`/`FileAccess` Protocols; `repo.py` and `files.py` implement them; tools depend only on interfaces. One module = one responsibility.
-- **Dependency injection via FastMCP lifespan** — the server hands a `(reader, file_access, embed_repo)` tuple to every tool; no globals, trivial to test.
-- **Read-only on the graph, read-write on embeddings** — Emacs owns org-roam's tables; we only append our own `embed_*` tables. No locking risk, no schema conflicts.
-- **stdlib-first** — HTTP, JSON, hashing, concurrency all use the standard library. The only pip deps are the MCP SDK and sqlite-vec.
+- **Dependency injection via FastMCP lifespan** — the server hands each tool its deps (`reader`, `file_access`, `embed_repo`, `code_graph`) from the lifespan context; no globals, trivial to test.
+- **Read-only on the graph, read-write on our own tables** — Emacs owns org-roam's tables; we only append `embed_*` (vectors + code symbols) and `code_projects`. No locking risk, no schema conflicts.
+- **stdlib-first** — HTTP, JSON, hashing, concurrency all use the standard library. Pip deps are limited to the MCP SDK, sqlite-vec, tree-sitter (code parsing), and watchfiles (re-indexing on save).
 - **Graceful degradation** — no Ollama? Graph tools still work. No sqlite-vec? Semantic tools report it clearly instead of crashing.
 - **Async without threads blocking the event loop** — Ollama calls and the rerank fan-out run via `asyncio.to_thread` / `ThreadPoolExecutor`.
