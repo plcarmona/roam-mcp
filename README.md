@@ -24,7 +24,7 @@ org-roam is a powerful plain-text knowledge graph, but its search is keyword-onl
 - **Semantic search** — search by meaning, not keywords. Two-stage retrieval (vector KNN → cross-encoder rerank).
 - **Claim extraction** — decompose dense notes (lectures, papers) into atomic, self-contained, embeddable claims.
 - **LLM summarization** — map-reduce summaries for long notes via a local model.
-- **Code understanding** — index a Python codebase into the *same* vector store, search symbols by meaning, and expand a query into its callers / callees / imports graph. A file watcher keeps the index live on every save.
+- **Code understanding** — index a codebase (.py/.ts/.tsx) into the *same* vector store, search symbols by meaning, scope queries to a project, traverse multi-hop callers/callees, and constrain search to the graph neighborhood of an anchor symbol. A file watcher keeps the index live on every save.
 - **YouTube ingestion** — transcribe hour-long videos into searchable notes asynchronously, then index them.
 - **Privacy-first** — all AI runs locally (Ollama); your notes never leave the machine.
 
@@ -82,7 +82,7 @@ This makes notes discoverable by the *idea they express*, even when the exact wo
 
 ## Tool reference
 
-`mcp-roam` exposes 23 tools and 3 prompts.
+`mcp-roam` exposes 26 tools and 3 prompts.
 
 | Tool | Description |
 |------|-------------|
@@ -102,9 +102,12 @@ This makes notes discoverable by the *idea they express*, even when the exact wo
 | `roam_extract_claims` | Decompose a note into atomic embeddable claims |
 | `roam_enhance` | LLM-generated summary (map-reduce for long notes) |
 | `roam_index_stats` | Embedding index statistics |
-| `roam_index_code` | Index a code project (Python) for semantic search |
-| `roam_code_search` | Semantic search across indexed code symbols |
-| `roam_code_graph` | Symbol search + callers / callees / imports expansion |
+| `roam_index_code` | Index a code project (.py/.ts/.tsx) for semantic search (idempotent, replace mode) |
+| `roam_list_code_projects` | List indexed code projects with root path + last-updated time |
+| `roam_remove_project` | Remove a project and all its symbols, edges, and embeddings |
+| `roam_code_search` | Semantic search across indexed code symbols (+ `project`/`kind` filter, reranked) |
+| `roam_code_graph` | Symbol search + callers/callees/imports (+ multi-hop `depth`, `project` scope) |
+| `roam_code_search_near` | Semantic search scoped to the graph neighborhood of an anchor symbol |
 | `roam_watch_code` | Watch a project and re-index incrementally on save |
 | `roam_watch_status` | Show the file watcher status and recent events |
 | `roam_youtube_note` | Start async YouTube → note transcription |
@@ -199,7 +202,7 @@ From a raw YouTube URL to a semantically-queryable note — no copy-paste, no ma
 
 ## Example 3 — Semantic search over a codebase
 
-Index any Python project into the *same* vector store as your notes, then ask for a concept in natural language and get the exact symbol plus its call graph.
+Index any .py/.ts/.tsx project into the *same* vector store as your notes, then ask for a concept in natural language and get the exact symbol plus its call graph — scoped to one project, with multi-hop traversal.
 
 **1. Index the project (once):**
 
@@ -212,8 +215,8 @@ roam_index_code(path="/home/pit/projects/webui")
 **2. Ask for a concept — it returns the symbol and who calls it / what it calls:**
 
 ```
-roam_code_graph(query="load a MIDI file into the synth", k=3)
-→ Code graph for "load a MIDI file into the synth" — 3 symbols
+roam_code_graph(query="load a MIDI file into the synth", k=3, depth=2)
+→ Code graph for "load a MIDI file into the synth" — 3 symbols (depth=2)
 
 ## load_midi (webui/server.py, function, d=0.21)
   reads a .mid and routes note-on events to the engine
@@ -225,6 +228,19 @@ roam_code_graph(query="load a MIDI file into the synth", k=3)
 ```
 
 One call gives the agent the symbol, its callers, and its callees — enough to answer or refactor without grepping. Code symbols reuse the `embed_*` tables (with `code:`-prefixed IDs), so there is no separate index.
+
+**Scope a search to a neighborhood** — find patterns only within N graph hops of an anchor symbol (e.g. error-handling in code that depends on the upload path):
+
+```
+roam_code_search_near(
+  query="error handling and logging",
+  anchor="webui/server.py::handle_upload",
+  depth=2,
+)
+→ Search near webui/server.py::handle_upload (depth=2) — 4 symbols
+  1. [function] webui/server.py :: log_failure  (score=0.88)
+  ...
+```
 
 **3. Keep it live** — edits re-index on save:
 
@@ -281,12 +297,16 @@ OLLAMA_RERANKER_MODEL=awenleven/Qwen3-Reranker-4B:Q4_K_M
 OLLAMA_MODEL=granite3.3:latest            # for enhance / claim extraction
 
 YT_SERVICE_URL=http://localhost:9000/yt   # YouTube transcription service
+
+ROAM_SEARCH_HOST=127.0.0.1                # roam-search HTTP endpoint (for Emacs)
+ROAM_SEARCH_PORT=8765                     # roam-search HTTP port
 ```
 
 ## Run
 
 ```bash
 uv run mcp-roam          # starts the MCP server over stdio
+uv run roam-search       # optional: localhost HTTP search endpoint for Emacs (port 8765)
 ```
 
 Register it with an MCP client, e.g. OpenCode (`~/.config/opencode/opencode.json`):
@@ -312,12 +332,12 @@ Register it with an MCP client, e.g. OpenCode (`~/.config/opencode/opencode.json
 mcp_roam/
 ├── server.py       ← FastMCP entry point + composition root (lifespan DI)
 ├── _tools.py       ← 16 graph/semantic MCP tool definitions
-├── _code_tools.py  ← 5 code-indexing MCP tools (index/search/graph/watch)
+├── _code_tools.py  ← 8 code-indexing MCP tools (index/list/remove/search/graph/search-near/watch)
 ├── youtube.py      ← 2 YouTube transcription tools (HTTP, stdlib-only)
 ├── prompts.py      ← 3 MCP prompts (assistant, research, analyze)
 ├── embeddings.py   ← sqlite-vec store + Ollama embed/rerank
 ├── segmenter.py    ← org-aware semantic unit segmentation
-├── code.py         ← code symbol graph: tree-sitter parse + embed + callers/callees + watcher
+├── code.py         ← v2 multi-language code graph: tree-sitter parse + embed + per-project callers/callees + watcher
 ├── llm.py          ← Ollama LLM: map-reduce summary + claim extraction
 ├── domain.py       ← frozen dataclasses + org parsing (zero deps)
 ├── interfaces.py   ← Protocol definitions (DIP contracts)
@@ -325,7 +345,8 @@ mcp_roam/
 ├── files.py        ← atomic file I/O + daily-note paths
 ├── capture.py      ← note creation / append
 ├── context.py      ← graph context + subgraph assembly
-└── research.py     ← structured research note builder
+├── research.py     ← structured research note builder
+└── search_http.py  ← localhost HTTP search endpoint for Emacs (JSON, not MCP)
 ```
 
 ## Design decisions
@@ -336,3 +357,4 @@ mcp_roam/
 - **stdlib-first** — HTTP, JSON, hashing, concurrency all use the standard library. Pip deps are limited to the MCP SDK, sqlite-vec, tree-sitter (code parsing), and watchfiles (re-indexing on save).
 - **Graceful degradation** — no Ollama? Graph tools still work. No sqlite-vec? Semantic tools report it clearly instead of crashing.
 - **Async without threads blocking the event loop** — Ollama calls and the rerank fan-out run via `asyncio.to_thread` / `ThreadPoolExecutor`.
+- **Per-project code graph namespacing** — the in-memory relationship graph is namespaced by project, so call/import edges never resolve across projects; `index_project(replace=True)` wipes prior state first for idempotent re-indexing with no stale symbols or cross-project contamination.
