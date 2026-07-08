@@ -2,7 +2,7 @@
 
 **An MCP server that gives AI agents a semantic brain over an org-roam knowledge graph.**
 
-`mcp-roam` bridges any [Model Context Protocol](https://modelcontextprotocol.io/) client (OpenCode, Claude, etc.) to an [org-roam](https://www.orgroam.com/) Zettelkasten. Beyond plain graph traversal, it embeds the entire graph **inside the existing org-roam SQLite database** so an agent can search your notes by *meaning* — and ingest new knowledge directly from YouTube transcripts or research papers.
+`mcp-roam` bridges any [Model Context Protocol](https://modelcontextprotocol.io/) client (OpenCode, Claude, etc.) to an [org-roam](https://www.orgroam.com/). Beyond plain graph traversal, it embeds the entire graph **inside the existing org-roam SQLite database** so an agent can search your notes by *meaning* — and ingest new knowledge directly from YouTube transcripts or research papers.
 
 ---
 
